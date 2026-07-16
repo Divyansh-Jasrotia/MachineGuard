@@ -13,6 +13,7 @@ LOW_BAND_BASELINE = 0.20
 MID_HIGH_BAND_BASELINE = 0.25
 HIGH_BAND_BASELINE = 0.15
 RMS_VARIANCE_THRESHOLD = 0.015
+LLM_TIMEOUT_SECONDS = 3
 
 # These are intentionally fixed, deterministic fallbacks for when an LLM is
 # unavailable.  All four requested placeholders are preserved verbatim.
@@ -98,11 +99,11 @@ def build_evidence(machine_type, score, features, band_ratios) -> dict:
 
 
 def generate_narrative(evidence, lang) -> str:
-    """Return an LLM narrative, with one retry and a deterministic fallback.
+    """Return an LLM narrative, with a fast deterministic fallback.
 
     Set ``LLM_PROVIDER`` to ``groq``, ``gemini``, or ``none``. The two remote
-    paths use only ``requests`` and each network attempt has an eight-second
-    timeout; a provider error always falls through to the local template.
+    paths use only ``requests`` and have a short timeout; a provider error
+    always falls through to the local template without delaying the analysis.
     """
     language = "hi" if lang == "hi" else "en"
     provider = os.getenv("LLM_PROVIDER", "none").strip().lower()
@@ -113,7 +114,7 @@ def generate_narrative(evidence, lang) -> str:
     )
     user_prompt = "Use this evidence. Treat fault hypotheses as heuristic, not certain:\n" + json.dumps(evidence)
 
-    for _ in range(2):
+    for _ in range(1):
         try:
             if provider == "groq":
                 api_key = os.getenv("GROQ_API_KEY")
@@ -127,7 +128,7 @@ def generate_narrative(evidence, lang) -> str:
                         "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
                         "temperature": 0.2,
                     },
-                    timeout=8,
+                    timeout=LLM_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
                 text = response.json()["choices"][0]["message"]["content"].strip()
@@ -143,7 +144,7 @@ def generate_narrative(evidence, lang) -> str:
                         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
                         "generationConfig": {"temperature": 0.2},
                     },
-                    timeout=8,
+                    timeout=LLM_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
                 text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()

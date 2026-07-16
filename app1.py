@@ -32,21 +32,34 @@ def _model_for(machine_type: str):
         return None
 
 
+PANEL_BG = "#0d2236"
+PANEL_BORDER = "#1c4969"
+TEXT_MUTED = "#91a4bd"
+TEXT_LIGHT = "#e6f0ff"
+
+
 def _mel_plot(mel):
-    """Render lib-produced mel data as a compact dark-friendly plot."""
+    """Render lib-produced mel data styled to match the app's dark cards."""
     figure, axis = plt.subplots(figsize=(8, 3.4))
+    figure.patch.set_facecolor(PANEL_BG)
+    axis.set_facecolor(PANEL_BG)
     image = axis.imshow(mel, aspect="auto", origin="lower", cmap="magma")
-    axis.set(title="Log-mel spectrogram", xlabel="Frames", ylabel="Mel band")
-    figure.colorbar(image, ax=axis, label="dB")
+    axis.set_title("Log-mel spectrogram", color=TEXT_LIGHT, fontsize=11, pad=10)
+    axis.set_xlabel("Frames", color=TEXT_MUTED, fontsize=9)
+    axis.set_ylabel("Mel band", color=TEXT_MUTED, fontsize=9)
+    axis.tick_params(colors=TEXT_MUTED, labelsize=8)
+    for spine in axis.spines.values():
+        spine.set_color(PANEL_BORDER)
+    colorbar = figure.colorbar(image, ax=axis, label="dB")
+    colorbar.ax.yaxis.set_tick_params(color=TEXT_MUTED, labelcolor=TEXT_MUTED, labelsize=8)
+    colorbar.outline.set_edgecolor(PANEL_BORDER)
+    colorbar.set_label("dB", color=TEXT_MUTED, fontsize=9)
     figure.tight_layout()
     return figure
 
 
 def _warm_analysis_pipeline():
     """Compile/load local analysis dependencies before a user records audio."""
-    # Librosa uses Numba for parts of feature extraction.  Its first invocation
-    # can compile for a noticeable time; doing it during app startup prevents a
-    # recording from appearing to freeze after the user presses Stop.
     warm_audio = np.zeros(SAMPLE_RATE, dtype=np.float32)
     extract_features(warm_audio)
     compute_melspec(warm_audio)
@@ -54,22 +67,46 @@ def _warm_analysis_pipeline():
         _model_for(kind)
 
 
-def _health_label(score: float) -> dict[str, float]:
-    """Map the calibrated score to the product's color-coded health state."""
+def _severity(score: float) -> tuple[str, str, str]:
+    """Return (state label, dot emoji, color) so every gauge/table use agrees."""
     if score > 60:
-        state, dot = "FAULT", "🔴"
-    elif score > 35:
-        state, dot = "WARNING", "🟡"
-    else:
-        state, dot = "HEALTHY", "🟢"
-    return {f"{dot} {state} — {score:.1f} / 100": 1.0}
+        return "FAULT", "🔴", "#ef4444"
+    if score > 35:
+        return "WARNING", "🟡", "#f5b400"
+    return "HEALTHY", "🟢", "#22c55e"
+
+
+def _health_html(score: float) -> str:
+    """Render a gauge whose fill color always matches the verdict's severity."""
+    state, dot, color = _severity(score)
+    pct = max(0.0, min(100.0, score))
+    return f"""
+    <div class="health-gauge mg-card">
+      <div class="health-gauge-label" style="color:{color}">{dot} {state} — {score:.1f} / 100</div>
+      <div class="health-gauge-track">
+        <div class="health-gauge-fill" style="width:{pct}%; background:{color}"></div>
+      </div>
+      <div class="health-gauge-scale"><span>0 · Healthy</span><span>100 · Severe fault</span></div>
+    </div>
+    """
+
+
+def _status_html(text: str, color: str = "#91a4bd") -> str:
+    """Neutral gauge state for the awaiting/unavailable placeholders."""
+    return f"""
+    <div class="health-gauge mg-card">
+      <div class="health-gauge-label" style="color:{color}">{text}</div>
+      <div class="health-gauge-track"><div class="health-gauge-fill" style="width:0%"></div></div>
+      <div class="health-gauge-scale"><span>0 · Healthy</span><span>100 · Severe fault</span></div>
+    </div>
+    """
 
 
 def analyze(audio_input, machine_type, language, history):
     """Thin UI adapter around the audio, model, and diagnosis libraries."""
     history = list(history or [])
     if not audio_input:
-        return {"Awaiting audio": 1.0}, None, "Upload or record a machine clip to begin.", history, history
+        return _status_html("⚪ Awaiting audio"), None, "Upload or record a machine clip to begin.", history, history
     try:
         payload_type = type(audio_input).__name__
         if isinstance(audio_input, (tuple, list)) and len(audio_input) == 2:
@@ -90,9 +127,7 @@ def analyze(audio_input, machine_type, language, history):
             raise ValueError("Loaded audio contains no samples.")
         silence_ratio = float(np.mean(np.abs(audio) < 1e-3))
         if silence_ratio > 0.8:
-            return {
-                "Awaiting audio": 1.0
-            }, None, (
+            return _status_html("⚪ Awaiting audio"), None, (
                 "### Recording appears mostly silent\n"
                 "Please record again with a stronger machine sound."
             ), history, history
@@ -108,12 +143,13 @@ def analyze(audio_input, machine_type, language, history):
         )
         narrative = generate_narrative(evidence, language)
         verdict = evidence["verdict"]
-        history.insert(0, [datetime.now().strftime("%H:%M:%S"), machine_type, round(score, 1), verdict])
+        _, dot, _ = _severity(score)
+        history.insert(0, [datetime.now().strftime("%H:%M:%S"), machine_type, round(score, 1), f"{dot} {verdict}"])
         history = history[:50]
 
-        return _health_label(score), _mel_plot(compute_melspec(audio)), narrative, history, history
+        return _health_html(score), _mel_plot(compute_melspec(audio)), narrative, history, history
     except Exception as error:
-        return {"Analysis unavailable": 1.0}, None, f"### Unable to analyse this clip\n`{error}`", history, history
+        return _status_html("⚠️ Analysis unavailable", "#f5b400"), None, f"### Unable to analyse this clip\n`{error}`", history, history
 
 
 def choose_sample(filename: str, machine_type: str):
@@ -133,10 +169,43 @@ footer {display: none !important}
 #title {text-align:center; margin: 20px 0 2px; font-size: 2.25rem}
 #tagline {text-align:center; color:#91a4bd; margin:0 0 20px}
 #footer {text-align:center; color:#91a4bd; margin:24px 0 8px}
-#recording-tip {background:#0d2236; border:1px solid #1c4969; border-radius:10px; color:#b9dff6; margin:8px 0 14px; padding:10px 13px}
-#result-heading {margin:2px 0 8px; color:#d9edff}
+#result-heading {margin:2px 0 12px; color:#d9edff; font-size:1.05rem}
 .primary-action button {min-height:48px; font-size:1.05rem; font-weight:700}
 .sample-row button {border-color:#274764 !important}
+
+/* Shared card system: every panel (tip, selectors, gauge, plot, diagnosis)
+   uses the exact same background/border/radius/padding/spacing so nothing
+   looks mismatched next to anything else. */
+:root {
+  --mg-bg: #0d2236;
+  --mg-border: #1c4969;
+  --mg-radius: 12px;
+  --mg-pad: 16px;
+  --mg-gap: 16px;
+}
+.mg-card {
+  background: var(--mg-bg) !important;
+  border: 1px solid var(--mg-border) !important;
+  border-radius: var(--mg-radius) !important;
+  padding: var(--mg-pad) !important;
+  margin: 0 0 var(--mg-gap) 0 !important;
+}
+#left-col > *, #right-col > * { margin-bottom: var(--mg-gap) !important; }
+#left-col > *:last-child, #right-col > *:last-child { margin-bottom: 0 !important; }
+
+#recording-tip { color:#b9dff6; }
+#selector-row { gap: var(--mg-gap) !important; }
+#selector-row .gr-form, #selector-row > div { background: transparent !important; border: none !important; box-shadow:none !important; }
+
+.health-gauge-label {font-size:1.2rem; font-weight:700; margin-bottom:8px}
+.health-gauge-track {height:10px; border-radius:6px; background:#182a40; overflow:hidden}
+.health-gauge-fill {height:100%; transition:width .3s ease}
+.health-gauge-scale {display:flex; justify-content:space-between; color:#7f93ad; font-size:.78rem; margin-top:6px}
+
+#mel-plot-card { padding: 4px !important; }
+#mel-plot-card .plot-container { background: var(--mg-bg) !important; }
+
+#score-note {color:#7f93ad; font-size:.85rem; margin:6px 0 10px}
 """
 
 
@@ -149,29 +218,24 @@ with gr.Blocks(theme=dark_theme, css=css, title="MachineGuard") as demo:
         with gr.Column(scale=1):
             audio = gr.Audio(
                 sources=["microphone", "upload"],
-                # A finalized WAV path is more reliable than the in-memory
-                # microphone payload on Gradio 4.x, which can be incomplete
-                # when the stop event fires.
                 type="filepath",
                 format="wav",
                 label="Machine audio (record 5–12 seconds)",
                 min_length=MIN_RECORDING_SECONDS,
                 max_length=MAX_RECORDING_SECONDS,
-                # Brave can lock up while Gradio continuously draws the live
-                # recording waveform. Use the browser's native audio player
-                # during capture instead.
                 waveform_options=gr.WaveformOptions(show_recording_waveform=False, show_controls=False),
             )
             gr.Markdown(
                 "**How to record:** place the microphone near the machine, capture a steady 5–12 second sound, then press Stop. Analysis starts automatically.",
                 elem_id="recording-tip",
             )
-            machine_type = gr.Dropdown(["fan", "pump", "valve"], value="fan", label="Machine type", info="Choose the machine you recorded.")
-            language = gr.Radio([("English", "en"), ("हिन्दी", "hi")], value="en", label="Diagnosis language")
+            with gr.Row(elem_id="selector-row"):
+                machine_type = gr.Dropdown(["fan", "pump", "valve"], value="fan", label="Machine type", info="Choose the machine you recorded.")
+                language = gr.Radio([("English", "en"), ("हिन्दी", "hi")], value="en", label="Diagnosis language")
             analyze_button = gr.Button("Analyze recording", variant="primary", elem_classes=["primary-action"])
         with gr.Column(scale=1):
             gr.Markdown("#### Analysis result", elem_id="result-heading")
-            gauge = gr.Label(label="Health gauge")
+            gauge = gr.HTML(_status_html("⚪ Awaiting audio"), label="Health gauge")
             mel_plot = gr.Plot(label="Mel-spectrogram")
 
     with gr.Accordion("Try a reference sample", open=False):
@@ -184,14 +248,16 @@ with gr.Blocks(theme=dark_theme, css=css, title="MachineGuard") as demo:
             healthy_valve = gr.Button("Healthy Valve")
             faulty_valve = gr.Button("Faulty Valve")
 
-    diagnosis = gr.Markdown("### Diagnosis\nYour maintenance guidance will appear here.")
+    diagnosis = gr.Markdown("### Diagnosis\nYour maintenance guidance will appear here.", elem_id="diagnosis-card")
+    gr.Markdown(
+        "Score is a calibrated anomaly rating: **0 = healthy**, **100 = severe fault** "
+        "(🟢 ≤35 healthy · 🟡 36–60 warning · 🔴 >60 fault).",
+        elem_id="score-note",
+    )
     history_table = gr.Dataframe(headers=HISTORY_HEADERS, value=[], interactive=False, label="Session history")
 
     outputs = [gauge, mel_plot, diagnosis, history_table, session_history]
     analyze_button.click(analyze, [audio, machine_type, language, session_history], outputs, queue=False)
-    # ``change`` also fires while the microphone input is being updated.  That
-    # can start analysis on its first tiny buffer and freeze the recorder.
-    # Listen only for the explicit stop action instead.
     audio.stop_recording(analyze, [audio, machine_type, language, session_history], outputs, queue=False)
     for button, filename, kind in (
         (healthy_fan, "fan_healthy.wav", "fan"),

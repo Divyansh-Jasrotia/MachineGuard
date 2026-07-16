@@ -49,7 +49,7 @@ MachineGuard always works without an LLM: it falls back to a deterministic Engli
 | Groq | `$env:LLM_PROVIDER="groq"`<br>`$env:GROQ_API_KEY="..."`<br>Optional: `$env:GROQ_MODEL="llama-3.1-8b-instant"` |
 | Gemini | `$env:LLM_PROVIDER="gemini"`<br>`$env:GEMINI_API_KEY="..."`<br>Optional: `$env:GEMINI_MODEL="gemini-1.5-flash"` |
 
-Network calls use an 8-second timeout and one retry. Missing keys or provider failures automatically use the local template, so a demo never blocks on an API.
+Network calls use a 3-second timeout with no retry. Missing keys or provider failures automatically use the local template, so a demo remains responsive.
 
 ## Architecture
 

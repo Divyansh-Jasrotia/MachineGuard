@@ -6,26 +6,76 @@ from os import PathLike
 
 import librosa
 import numpy as np
+import soundfile as sf
 
 
 TARGET_RMS = 0.1
 SAMPLE_RATE = 16_000
 
 
-def load_audio(path_or_array: str | PathLike[str] | np.ndarray | tuple[np.ndarray, int], sr: int = SAMPLE_RATE) -> np.ndarray:
+def load_audio(
+    path_or_array: str | PathLike[str] | np.ndarray | tuple[int, np.ndarray] | tuple[np.ndarray, int] | list | dict,
+    sr: int = SAMPLE_RATE,
+) -> np.ndarray:
     """Load mono ``float32`` audio at ``sr`` and RMS-normalize it afterwards.
 
     File paths are decoded and resampled by librosa. Arrays are assumed already
-    to use ``sr``; alternatively pass ``(array, source_sample_rate)`` when an
-    array has a different rate. Stereo arrays are averaged to mono.
+    to use ``sr``; alternatively pass ``(array, source_sample_rate)`` or
+    ``(source_sample_rate, array)`` when an array has a different rate.
+    Stereo arrays are averaged to mono.
     """
     if isinstance(path_or_array, (str, PathLike)):
-        y, _ = librosa.load(path_or_array, sr=sr, mono=True, dtype=np.float32)
+        y, original_sr = sf.read(path_or_array, dtype="float32")
+        if y.size == 0:
+            raise ValueError(f"Audio file {path_or_array} contains no samples.")
+        if y.ndim == 2:
+            axis = 0 if y.shape[0] <= y.shape[1] else 1
+            y = np.mean(y, axis=axis, dtype=np.float32)
+        if original_sr != sr:
+            y = librosa.resample(y, orig_sr=original_sr, target_sr=sr)
     else:
         source_sr = sr
         audio = path_or_array
-        if isinstance(path_or_array, tuple):
-            audio, source_sr = path_or_array
+        if isinstance(path_or_array, dict):
+            if "sample_rate" in path_or_array and "data" in path_or_array:
+                source_sr = int(path_or_array["sample_rate"])
+                audio = path_or_array["data"]
+            elif "sr" in path_or_array and "array" in path_or_array:
+                source_sr = int(path_or_array["sr"])
+                audio = path_or_array["array"]
+            elif "path" in path_or_array:
+                return load_audio(path_or_array["path"], sr=sr)
+            elif "name" in path_or_array and "mime_type" in path_or_array and "data" in path_or_array:
+                # Gradio may pass recorded audio as a dict with metadata keys.
+                source_sr = int(path_or_array.get("sample_rate", sr))
+                audio = path_or_array["data"]
+            else:
+                raise ValueError(
+                    "Unsupported audio dict format. Expected keys like 'sample_rate' and 'data'."
+                )
+        if isinstance(path_or_array, (tuple, list)):
+            if len(path_or_array) != 2:
+                raise ValueError(
+                    "Audio tuple/list must be either (audio, sample_rate) or (sample_rate, audio)."
+                )
+            first, second = path_or_array
+            if isinstance(first, (int, np.integer)) and not isinstance(second, (int, np.integer)):
+                source_sr, audio = int(first), second
+            elif isinstance(second, (int, np.integer)) and not isinstance(first, (int, np.integer)):
+                source_sr, audio = int(second), first
+            elif isinstance(first, (str, PathLike)):
+                return load_audio(first, sr=sr)
+            elif isinstance(second, (str, PathLike)):
+                return load_audio(second, sr=sr)
+            elif isinstance(first, np.ndarray):
+                audio = first
+                source_sr = sr
+            elif isinstance(second, np.ndarray):
+                audio = second
+                source_sr = sr
+            else:
+                audio = first
+                source_sr = sr
         y = np.asarray(audio, dtype=np.float32)
         if y.ndim == 2:
             # Handles both (channels, samples) and (samples, channels).
