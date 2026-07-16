@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 import requests
 
@@ -14,6 +16,8 @@ MID_HIGH_BAND_BASELINE = 0.25
 HIGH_BAND_BASELINE = 0.15
 RMS_VARIANCE_THRESHOLD = 0.015
 LLM_TIMEOUT_SECONDS = 3
+GNANI_TTS_TIMEOUT_SECONDS = 30
+GNANI_TTS_ENDPOINT = "https://api.vachana.ai/api/v1/tts/inference"
 
 # These are intentionally fixed, deterministic fallbacks for when an LLM is
 # unavailable.  All four requested placeholders are preserved verbatim.
@@ -166,3 +170,60 @@ def generate_narrative(evidence, lang) -> str:
     )
     template = HI_TEMPLATE if language == "hi" else EN_TEMPLATE
     return template.format(verdict=verdict, top_hypothesis=top_hypothesis, action=action, severity=severity)
+
+
+def synthesize_verdict(text: str) -> tuple[str | None, str | None]:
+    """Create a temporary WAV file for a verdict using Gnani Timbre TTS.
+
+    Configure ``GNANI_API_KEY`` to enable this optional feature. Any missing
+    configuration or API failure returns a short status so diagnosis text
+    remains available and the UI can explain why speech was unavailable.
+    """
+    api_key = os.getenv("GNANI_API_KEY")
+    if not api_key:
+        return None, "`GNANI_API_KEY` is not set in the PowerShell window running the app."
+    if not text.strip():
+        return None, "There is no verdict text to convert to speech."
+
+    timeout_seconds = float(os.getenv("GNANI_TTS_TIMEOUT_SECONDS", str(GNANI_TTS_TIMEOUT_SECONDS)))
+
+    try:
+        response = requests.post(
+            GNANI_TTS_ENDPOINT,
+            headers={"X-API-Key-ID": api_key, "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "voice": os.getenv("GNANI_TTS_VOICE", "Karan"),
+                "model": os.getenv("GNANI_TTS_MODEL", "vachana-voice-v3"),
+                "audio_config": {
+                    "sample_rate": 44100,
+                    "num_channels": 1,
+                    "sample_width": 2,
+                    "encoding": "linear_pcm",
+                    "container": "mp3",
+                    "bitrate": "192k",
+                },
+            },
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as audio_file:
+            audio_file.write(response.content)
+            return str(Path(audio_file.name)), None
+    except requests.HTTPError as error:
+        status = error.response.status_code if error.response is not None else "unknown"
+        detail = ""
+        if error.response is not None:
+            # Gnani sometimes includes a short, actionable JSON/message body.
+            # Limit it so an upstream error page is never dumped into the UI.
+            detail = error.response.text.strip().replace("\n", " ")[:300]
+        message = f"Gnani returned HTTP {status}."
+        if detail:
+            message += f" Server detail: `{detail}`"
+        elif status >= 500:
+            message += " The Gnani service could not process this request; retry shortly or contact Gnani support with the time of the request."
+        else:
+            message += " Check that the API key is active and authorized for Timbre TTS."
+        return None, message
+    except requests.RequestException as error:
+        return None, f"Gnani could not be reached ({type(error).__name__}). Check your internet connection and try again."

@@ -12,7 +12,7 @@ import numpy as np
 
 from lib.anomaly_model import load_detector, score_detector
 from lib.audio_processing import SAMPLE_RATE, compute_melspec, extract_features, load_audio
-from lib.diagnosis import build_evidence, generate_narrative
+from lib.diagnosis import build_evidence, generate_narrative, synthesize_verdict
 
 
 ROOT = Path(__file__).resolve().parent
@@ -69,7 +69,7 @@ def analyze(audio_input, machine_type, language, history):
     """Thin UI adapter around the audio, model, and diagnosis libraries."""
     history = list(history or [])
     if not audio_input:
-        return {"Awaiting audio": 1.0}, None, "Upload or record a machine clip to begin.", history, history
+        return {"Awaiting audio": 1.0}, None, "Upload or record a machine clip to begin.", "", None, history, history
     try:
         payload_type = type(audio_input).__name__
         if isinstance(audio_input, (tuple, list)) and len(audio_input) == 2:
@@ -95,7 +95,7 @@ def analyze(audio_input, machine_type, language, history):
             }, None, (
                 "### Recording appears mostly silent\n"
                 "Please record again with a stronger machine sound."
-            ), history, history
+            ), "", None, history, history
         features = extract_features(audio)
         model = _model_for(machine_type)
         score = float(score_detector(model, features)) if model is not None else 0.0
@@ -111,9 +111,17 @@ def analyze(audio_input, machine_type, language, history):
         history.insert(0, [datetime.now().strftime("%H:%M:%S"), machine_type, round(score, 1), verdict])
         history = history[:50]
 
-        return _health_label(score), _mel_plot(compute_melspec(audio)), narrative, history, history
+        return _health_label(score), _mel_plot(compute_melspec(audio)), narrative, narrative, None, history, history
     except Exception as error:
-        return {"Analysis unavailable": 1.0}, None, f"### Unable to analyse this clip\n`{error}`", history, history
+        return {"Analysis unavailable": 1.0}, None, f"### Unable to analyse this clip\n`{error}`", "", None, history, history
+
+
+def speak_verdict(narrative: str):
+    """Synthesize the displayed diagnosis when the user asks to hear it."""
+    audio_path, error_message = synthesize_verdict(narrative or "")
+    if audio_path:
+        return audio_path, "Speech is ready. Press Play in the audio player."
+    return None, f"Speech could not be generated. {error_message}"
 
 
 def choose_sample(filename: str, machine_type: str):
@@ -145,6 +153,7 @@ with gr.Blocks(theme=dark_theme, css=css, title="MachineGuard") as demo:
     gr.Markdown("**Listen early. Maintain smarter.** · AI-assisted machine-sound screening", elem_id="tagline")
 
     session_history = gr.State([])
+    narrative_state = gr.State("")
     with gr.Row():
         with gr.Column(scale=1):
             audio = gr.Audio(
@@ -185,14 +194,18 @@ with gr.Blocks(theme=dark_theme, css=css, title="MachineGuard") as demo:
             faulty_valve = gr.Button("Faulty Valve")
 
     diagnosis = gr.Markdown("### Diagnosis\nYour maintenance guidance will appear here.")
+    speak_button = gr.Button("Speak verdict with Gnani", variant="secondary", visible=True)
+    verdict_audio = gr.Audio(label="Spoken verdict", type="filepath", interactive=False)
+    speech_status = gr.Markdown("")
     history_table = gr.Dataframe(headers=HISTORY_HEADERS, value=[], interactive=False, label="Session history")
 
-    outputs = [gauge, mel_plot, diagnosis, history_table, session_history]
+    outputs = [gauge, mel_plot, diagnosis, narrative_state, verdict_audio, history_table, session_history]
     analyze_button.click(analyze, [audio, machine_type, language, session_history], outputs, queue=False)
     # ``change`` also fires while the microphone input is being updated.  That
     # can start analysis on its first tiny buffer and freeze the recorder.
     # Listen only for the explicit stop action instead.
     audio.stop_recording(analyze, [audio, machine_type, language, session_history], outputs, queue=False)
+    speak_button.click(speak_verdict, narrative_state, [verdict_audio, speech_status], queue=False)
     for button, filename, kind in (
         (healthy_fan, "fan_healthy.wav", "fan"),
         (faulty_fan, "fan_faulty.wav", "fan"),

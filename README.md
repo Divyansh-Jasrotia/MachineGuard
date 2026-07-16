@@ -51,6 +51,20 @@ MachineGuard always works without an LLM: it falls back to a deterministic Engli
 
 Network calls use a 3-second timeout with no retry. Missing keys or provider failures automatically use the local template, so a demo remains responsive.
 
+## Optional spoken verdict (Gnani TTS)
+
+To add a playable spoken version of the diagnosis, create a Gnani Timbre API key and set it before starting the app:
+
+```powershell
+$env:GNANI_API_KEY="..."
+# Optional defaults:
+$env:GNANI_TTS_VOICE="Karan"
+$env:GNANI_TTS_MODEL="vachana-voice-v3"
+$env:GNANI_TTS_TIMEOUT_SECONDS="30"
+```
+
+After analysis, click **Speak verdict** to send the finished diagnosis text to Gnani's REST TTS endpoint. The returned MP3 appears in the **Spoken verdict** player. Without the key, the app shows a configuration message and text diagnosis continues normally.
+
 ## Architecture
 
 ```text
