@@ -323,4 +323,4 @@ with gr.Blocks(theme=dark_theme, css=css, title="MachineGuard") as demo:
 
 if __name__ == "__main__":
     _warm_analysis_pipeline()
-    demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)))
+    demo.launch(server_name="0.0.0.0", server_port=int(os.environ.get("PORT", 7860)), share=False, root_path=os.environ.get("GRADIO_ROOT_PATH", ""))
