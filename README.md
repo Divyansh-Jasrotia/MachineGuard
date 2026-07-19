@@ -1,13 +1,21 @@
+---
+title: MachineGuard
+emoji: 🔊
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
+pinned: false
+license: mit
+---
+
 # MachineGuard
 
 MachineGuard is a lightweight preventive-maintenance demo that listens to fan, pump, and valve recordings, turns each clip into acoustic features, scores how unusual it is compared with normal machine sound, and explains the result in plain language. It is built for a small-factory owner: upload or record audio, review a 0–100 health signal and mel-spectrogram, then act on clearly labelled *heuristic* maintenance hypotheses rather than treating the result as a certain diagnosis.
 
-**Live demo:** [Hugging Face Spaces — coming soon](https://huggingface.co/spaces/YOUR_USERNAME/MachineGuard)
-
-> Replace `YOUR_USERNAME` with the deployed Space owner before judging.
-
-<!-- Screenshot placeholder: add a UI screenshot here. -->
-<!-- GIF placeholder: add a 10–15 second upload-to-diagnosis demo here. -->
+<!-- TODO: fill in the Hugging Face Space URL after deploying -->
+**Live demo:** TODO — add the Hugging Face Spaces URL here after deploying.
 
 ## Run locally in 60 seconds
 
@@ -29,13 +37,13 @@ python scripts/train.py
 
 ## Measured metrics
 
-`metrics.md` is written by `scripts/train.py` after training; it is deliberately not present yet in this checkout, so no AUC values are claimed below.
+`metrics.md` is written by `scripts/train.py` after training on the held-out MIMII split.
 
-| Machine | Detector | ROC-AUC | Threshold | Status |
-|---|---|---:|---:|---|
-| Fan | — | — | — | Not trained; run `python scripts/train.py` |
-| Pump | — | — | — | Not trained; run `python scripts/train.py` |
-| Valve | — | — | — | Not trained; run `python scripts/train.py` |
+| Machine | Detector | ROC-AUC | Threshold |
+|---|---|---:|---:|
+| Fan | GMM | 0.870 | 4.39 |
+| Pump | GMM | 0.954 | 33.50 |
+| Valve | GMM | 0.937 | 58.91 |
 
 The training script reports the measured held-out ROC-AUC only. If a GMM is below 0.75 for a machine type, it switches that type to IsolationForest and records the reason in `metrics.md`.
 
